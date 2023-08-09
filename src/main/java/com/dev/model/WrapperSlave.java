@@ -1,0 +1,58 @@
+package com.dev.model;
+
+import lombok.extern.slf4j.Slf4j;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Consumer;
+@Slf4j
+public class WrapperSlave implements SlaveHolder{
+    private Object slave;
+    private Map<String, Method> methods;
+    private Map<String,Map<ChecksEnum,CheckFunction>> checksMethods;
+
+    public WrapperSlave(Object slave){
+        this.slave = slave;
+        methods = new HashMap<>();
+        checksMethods = new HashMap<>();
+        for(Method method:slave.getClass().getDeclaredMethods()){
+            methods.put(method.getName(),method);
+        }
+    }
+    @Override
+    public Object invokeMethod(String methodName,Object... params){
+        Object returnValue = null;
+        if(methods.containsKey(methodName)){
+            Map<ChecksEnum,CheckFunction> checks = checksMethods.get(methodName);
+            if(checks.containsKey(ChecksEnum.BEFORE)){
+                checks.get(ChecksEnum.BEFORE).doFunction();
+            }
+            Method method = methods.get(methodName);
+            if(checks.containsKey(ChecksEnum.AFTER)){
+                checks.get(ChecksEnum.AFTER).doFunction();
+            }
+            try {
+                returnValue = method.invoke(slave,params);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            } catch (InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return returnValue;
+    }
+    public void putChecksOnMethod(String methodName,ChecksEnum check,CheckFunction checkFunction){
+        Consumer<String> checkIfPresent = (methodNameToPutChecks) ->{
+            if(methods.containsKey(methodNameToPutChecks)){
+                if(checksMethods.containsKey(methodNameToPutChecks)){
+                    checksMethods.computeIfPresent(methodNameToPutChecks,(k,v) -> v).put(check,checkFunction);
+                }else{
+                    checksMethods.computeIfAbsent(methodNameToPutChecks,(k) -> new HashMap<>()).put(check,checkFunction);
+                }
+            }
+        };
+        checkIfPresent.accept(methodName);
+    }
+}
