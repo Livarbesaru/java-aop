@@ -26,15 +26,15 @@ public class WrapperSlave implements SlaveHolder{
         Object returnValue = null;
         if(methods.containsKey(methodName)){
             Map<ChecksEnum,CheckFunction> checks = checksMethods.get(methodName);
-            if(checks.containsKey(ChecksEnum.BEFORE)){
-                checks.get(ChecksEnum.BEFORE).doFunction();
-            }
             Method method = methods.get(methodName);
-            if(checks.containsKey(ChecksEnum.AFTER)){
-                checks.get(ChecksEnum.AFTER).doFunction();
-            }
             try {
+                if(checks.containsKey(ChecksEnum.BEFORE)){
+                    checks.get(ChecksEnum.BEFORE).doFunction();
+                }
                 returnValue = method.invoke(slave,params);
+                if(checks.containsKey(ChecksEnum.AFTER)){
+                    checks.get(ChecksEnum.AFTER).doFunction();
+                }
             } catch (IllegalAccessException e) {
                 throw new RuntimeException(e);
             } catch (InvocationTargetException e) {
