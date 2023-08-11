@@ -15,6 +15,6 @@ public class StarterAOP {
         this.proxyLoaders.load();
     }
     public void start() {
-        proxyLoaders.getSlave(TestSlave.class).invokeMethod("getText");
+        proxyLoaders.getSlave(TestSlave.class).invokeMethod("printText");
     }
 }

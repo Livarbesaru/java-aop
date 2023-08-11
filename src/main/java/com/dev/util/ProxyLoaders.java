@@ -7,8 +7,10 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -20,6 +22,12 @@ import java.util.stream.Stream;
 public class ProxyLoaders {
     private final Map<Class<? extends SlaveInterface>,WrapperSlave> proxySlaves = new HashMap<>();
     private ApplicationContext applicationContext;
+    private InvocationHandler invocationHandler = new InvocationHandler() {
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+            return method.invoke(proxy,args);
+        }
+    };
 
     @Autowired
     public ProxyLoaders(ApplicationContext applicationContext){
@@ -36,8 +44,9 @@ public class ProxyLoaders {
                 Class<? extends SlaveInterface> classLoaded = null;
                 try {
                     classLoaded = (Class<? extends SlaveInterface>) Class.forName(replace);
+                    Proxy.newProxyInstance(classLoaded.getClassLoader(),new Class[]{SlaveInterface.class},invocationHandler);
                     if(classLoaded.getAnnotation(ProxySlave.class)!=null){
-                        testAnonymous(classLoaded);
+                        createWrapperAndMapMethods(classLoaded);
                     }
                 } catch (ClassNotFoundException e) {
                     throw new RuntimeException(e);
@@ -52,7 +61,7 @@ public class ProxyLoaders {
         return proxySlaves.get(clazz);
     }
 
-    private <C extends SlaveInterface> void testAnonymous(Class<C> clazz){
+    private <C extends SlaveInterface> void createWrapperAndMapMethods(Class<C> clazz){
         Object obj = null;
         try {
             obj = clazz.getConstructor().newInstance();
