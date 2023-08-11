@@ -1,10 +1,14 @@
 package com.dev.util;
 
 import com.dev.model.TestSlave;
+import com.dev.model.WrapperSlave;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
+
+import java.lang.reflect.Method;
+
 @Slf4j
 @Component
 public class StarterAOP {
@@ -15,6 +19,9 @@ public class StarterAOP {
         this.proxyLoaders.load();
     }
     public void start() {
+        for (Method method : WrapperSlave.class.getMethods()) {
+            log.info(method.getName());
+        }
         proxyLoaders.getSlave(TestSlave.class).invokeMethod("printText");
     }
 }

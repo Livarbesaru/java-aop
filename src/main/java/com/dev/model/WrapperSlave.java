@@ -20,6 +20,28 @@ public class WrapperSlave implements SlaveHolder{
         for(Method method:slave.getClass().getDeclaredMethods()){
             methods.put(method.getName(),method);
         }
+        invokeMethod("dio");
+    }
+    public Object invokeMethod(String methodName){
+        Object returnValue = null;
+        if(methods.containsKey(methodName)){
+            Map<ChecksEnum,CheckFunction> checks = checksMethods.get(methodName);
+            Method method = methods.get(methodName);
+            try {
+                if(checks.containsKey(ChecksEnum.BEFORE)){
+                    checks.get(ChecksEnum.BEFORE).doFunction();
+                }
+                returnValue = method.invoke(slave);
+                if(checks.containsKey(ChecksEnum.AFTER)){
+                    checks.get(ChecksEnum.AFTER).doFunction();
+                }
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            } catch (InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return returnValue;
     }
     @Override
     public Object invokeMethod(String methodName,Object... params){
