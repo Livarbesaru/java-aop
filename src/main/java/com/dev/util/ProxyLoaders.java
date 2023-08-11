@@ -10,29 +10,54 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.ProtectionDomain;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 @Component
 @Slf4j
-public class ProxyLoaders{
+public class ProxyLoaders implements ClassFileTransformer{
     private final Map<Class<? extends SlaveInterface>,WrapperSlave> proxySlaves = new HashMap<>();
     private ApplicationContext applicationContext;
+    private CtClass ctClazzWrapper;
+    private List<Class<? extends SlaveInterface>> slavesClasses = new ArrayList<>();
+    private ClassPool pool;
+    private Set<Class> ctWrapperInterfaces = new HashSet<>();
 
     @Autowired
     public ProxyLoaders(ApplicationContext applicationContext){
         this.applicationContext = applicationContext;
+        this.pool = ClassPool.getDefault();
+        loadWrapperCtClass();
     }
-    private ProxyLoaders(){
+    public ProxyLoaders(){
+        this.pool = ClassPool.getDefault();
+        loadWrapperCtClass();
     }
-    public void load(){
+    public static void premain(String agentArgument, Instrumentation instrumentation) {
+        instrumentation.addTransformer(new ProxyLoaders());
+    }
+    @Override
+    public byte[] transform(ClassLoader loader, String className,
+                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
+                            byte[] classfileBuffer){
+
+        try {
+            if(className.matches("com/dev/model/WrapperSlave")) {
+                return load();
+            } else {
+                return classfileBuffer;
+            }
+        } catch (IOException | CannotCompileException e) {
+            throw new RuntimeException(e);
+        }
+    }
+    public byte[] load() throws IOException, CannotCompileException {
         Path path = Paths.get("src/main/java/com/dev/");
         try (Stream<Path> pathsStream = Files.walk(path)){
             pathsStream.filter(file -> file.toString().endsWith(".java")).forEach(snglPath -> {
@@ -40,11 +65,12 @@ public class ProxyLoaders{
                         .replace("\\", ".")
                         .replace("src.main.java.", "")
                         .replace(".java", "");
-                Class<? extends SlaveInterface> classLoaded = null;
+                Class classLoaded = null;
                 try {
-                    classLoaded = (Class<? extends SlaveInterface>) Class.forName(replace);
+                    classLoaded = Class.forName(replace);
                     if(classLoaded.getAnnotation(ProxySlave.class)!=null){
-                        createWrapperAndMapMethods(classLoaded);
+                        Class<? extends SlaveInterface> classLoadedSlave = (Class<? extends SlaveInterface>) classLoaded;
+                        slavesClasses.add(classLoadedSlave);
                     }
                 } catch (ClassNotFoundException e) {
                     throw new RuntimeException(e);
@@ -53,62 +79,62 @@ public class ProxyLoaders{
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        slavesClasses.forEach(this::alterWrapperClass);
+        return ctClazzWrapper.toBytecode();
     }
 
+    public void loadWrappers(){
+        Path path = Paths.get("src/main/java/com/dev/");
+        try (Stream<Path> pathsStream = Files.walk(path)){
+            pathsStream.filter(file -> file.toString().endsWith(".java")).forEach(snglPath -> {
+                String replace = snglPath.toString()
+                        .replace("\\", ".")
+                        .replace("src.main.java.", "")
+                        .replace(".java", "");
+                Class classLoaded = null;
+                try {
+                    classLoaded = Class.forName(replace);
+                    if(classLoaded.getAnnotation(ProxySlave.class)!=null){
+                        Class<? extends SlaveInterface> classLoadedSlave = (Class<? extends SlaveInterface>) classLoaded;
+                        slavesClasses.add(classLoadedSlave);
+                    }
+                } catch (ClassNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        slavesClasses.forEach(this::createWrapperAndMapMethods);
+    }
     public <C extends SlaveInterface> WrapperSlave getSlave(Class<C> clazz){
         return proxySlaves.get(clazz);
     }
-
-    private <C extends SlaveInterface> void createWrapperAndMapMethods(Class<C> clazz){
-        Object obj = null;
+    private void loadWrapperCtClass(){
         String wrapperClassPosition = WrapperSlave.class.getName().replace('.','/')+".class";
         InputStream wrapperInput = null;
-        try {
-            ClassPool pool = ClassPool.getDefault();
-            wrapperInput = WrapperSlave.class.getClassLoader().getResourceAsStream(wrapperClassPosition);
-            CtClass ctClazzWrapper = pool.makeClass(wrapperInput);
-
-            addInterfacesToWrapper(ctClazzWrapper,clazz,pool);
-
-            obj = clazz.getConstructor().newInstance();
-            WrapperSlave wrapperSlave = new WrapperSlave(obj);
-
-            for(Method method:clazz.getDeclaredMethods()){
-                if(method.isAnnotationPresent(Before.class)){
-                    String functionCheckPath = method.getAnnotation(Before.class).pathToMethod();
-                    putCheckOnWrapperSlaveMethod(functionCheckPath,wrapperSlave,method,ChecksEnum.BEFORE);
-                }
-                if(method.isAnnotationPresent(After.class)){
-                    String functionCheckPath = method.getAnnotation(After.class).pathToMethod();
-                    putCheckOnWrapperSlaveMethod(functionCheckPath,wrapperSlave,method,ChecksEnum.AFTER);
-                }
-                addMethodToWrapper(method,ctClazzWrapper);
+            try {
+                wrapperInput = WrapperSlave.class.getClassLoader().getResourceAsStream(wrapperClassPosition);
+                ctClazzWrapper = pool.makeClass(wrapperInput);
+            }catch (IOException ex) {
+                throw new RuntimeException(ex);
             }
-            proxySlaves.put(clazz,wrapperSlave);
-            ctClazzWrapper.writeFile();
-            ctClazzWrapper.toClass();
-        } catch (InstantiationException e) {
-            throw new RuntimeException(e);
-        } catch (IllegalAccessException e) {
-            throw new RuntimeException(e);
-        } catch (InvocationTargetException e) {
-            throw new RuntimeException(e);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException(e);
-        } catch (ClassNotFoundException e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        } catch (NotFoundException e) {
-            throw new RuntimeException(e);
-        } catch (CannotCompileException e) {
-            throw new RuntimeException(e);
-        }
     }
 
-    private void addInterfacesToWrapper(CtClass ctClazzWrapper,Class clazzWithInterfaces,ClassPool pool) throws IOException, NotFoundException, CannotCompileException {
+    private <C extends SlaveInterface> void alterWrapperClass(Class<C> clazz){
+        try {
+            addInterfacesToWrapper(ctClazzWrapper,clazz,pool);
+            for(Method method:clazz.getMethods()){
+                addMethodToWrapper(method,ctClazzWrapper);
+            }
+        }catch (NotFoundException | IOException e) {
+            throw new RuntimeException(e);
+        }
+
+    }
+    private void addInterfacesToWrapper(CtClass ctClazzWrapper,Class clazzWithInterfaces,ClassPool pool) throws IOException, NotFoundException {
         for(Class interfaz:clazzWithInterfaces.getInterfaces()){
-            if(!interfaz.equals(SlaveInterface.class)){
+            if(!interfaz.equals(SlaveInterface.class) && ctWrapperInterfaces.add(interfaz)){
                 String interfazPath = interfaz.getName().replace('.','/')+".class";
                 InputStream interfazInput = interfaz.getClassLoader().getResourceAsStream(interfazPath);
                 ctClazzWrapper.addInterface(pool.makeClass(interfazInput));
@@ -155,16 +181,38 @@ public class ProxyLoaders{
         }
     }
 
+    private <C extends SlaveInterface> void createWrapperAndMapMethods(Class<C> clazz){
+        try{
+            Object obj = clazz.getConstructor().newInstance();
+            WrapperSlave wrapperSlave = new WrapperSlave(obj);
+            for(Method method:clazz.getDeclaredMethods()){
+                if(method.isAnnotationPresent(Before.class)){
+                    String functionCheckPath = method.getAnnotation(Before.class).pathToMethod();
+                    putCheckOnWrapperSlaveMethod(functionCheckPath,wrapperSlave,method,ChecksEnum.BEFORE);
+                }
+                if(method.isAnnotationPresent(After.class)){
+                    String functionCheckPath = method.getAnnotation(After.class).pathToMethod();
+                    putCheckOnWrapperSlaveMethod(functionCheckPath,wrapperSlave,method,ChecksEnum.AFTER);
+                }
+            }
+            proxySlaves.put(clazz,wrapperSlave);
+        }catch (Exception e){
+            throw new RuntimeException(e);
+        }
+    }
     private void putCheckOnWrapperSlaveMethod(String functionCheckPath,WrapperSlave wrapperSlave, Method method,ChecksEnum checksEnum) throws ClassNotFoundException {
-        Class<CheckFunctionDetainer> clazzCheck = (Class<CheckFunctionDetainer>) Class.forName(functionCheckPath);
-        applicationContext.getBeansOfType(clazzCheck)
-                .values()
-                .stream()
-                .filter(bean -> bean.getClass().equals(clazzCheck))
-                .findFirst().ifPresent(bean -> {
-                    CheckFunction function = bean.getFunction();
-                    wrapperSlave.putChecksOnMethod(method.getName(), checksEnum,function);
-                });
+        Class clazzCheck = Class.forName(functionCheckPath);
+        if(Arrays.stream(clazzCheck.getInterfaces()).anyMatch(interfacez->interfacez.equals(CheckFunctionDetainer.class))){
+            applicationContext.getBeansOfType(clazzCheck)
+                    .values()
+                    .stream()
+                    .filter(bean -> bean.getClass().equals(clazzCheck))
+                    .findFirst().ifPresent(bean -> {
+                        CheckFunction function = ((CheckFunctionDetainer)bean).getFunction();
+                        wrapperSlave.putChecksOnMethod(method.getName(), checksEnum,function);
+                    });
+        }
+
     }
 }
 

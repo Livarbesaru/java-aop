@@ -16,7 +16,7 @@ public class StarterAOP {
     @Autowired
     public StarterAOP(ProxyLoaders proxyLoaders, ApplicationContext applicationContext){
         this.proxyLoaders = proxyLoaders;
-        this.proxyLoaders.load();
+        this.proxyLoaders.loadWrappers();
     }
     public void start() {
         for (Method method : WrapperSlave.class.getMethods()) {

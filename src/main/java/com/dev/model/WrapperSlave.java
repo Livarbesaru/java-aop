@@ -20,7 +20,6 @@ public class WrapperSlave implements SlaveHolder{
         for(Method method:slave.getClass().getDeclaredMethods()){
             methods.put(method.getName(),method);
         }
-        invokeMethod("dio");
     }
     public Object invokeMethod(String methodName){
         Object returnValue = null;
